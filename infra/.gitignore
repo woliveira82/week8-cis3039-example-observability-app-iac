@@ -1,0 +1,7 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+# May contain environment-specific values; terraform.tfvars.example is the template.
+*.tfvars
+!*.tfvars.example

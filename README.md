@@ -20,110 +20,77 @@ npm run build
 
 ## Azure Setup
 
-### Publish the app to an Azure Storage Account (static website)
+The Azure resources are defined with Terraform in [infra/](infra/README.md). A single `terraform apply` creates them, builds the SPA with the right settings and publishes it to the storage account's static website.
 
-1. Create a Storage Account suited for static sites:
+### Prerequisites
 
-```bash
-az storage account create \
-  --name <productappstoragename> \
-  --resource-group <your-resource-group> \
-  --location <permitted-location> \
-  --sku Standard_LRS \
-  --kind StorageV2
-```
+- The backend products Function App, deployed separately. This repo doesn't create it, but it does add the deployed site to the app's CORS settings, so the app must exist before you apply.
+- Terraform 1.5 or later.
+- The Azure CLI, logged in with `az login`.
+- Node.js `^20.19.0` or `>=22.12.0`.
+- An Azure account that can create resource groups, in a subscription where `Microsoft.Storage`, `Microsoft.OperationalInsights` and `Microsoft.Insights` are registered.
 
-2. Enable static website and set the index page:
+### Deploy
 
-```bash
-az storage blob service-properties update \
-  --account-name <productappstoragename> \
-  --static-website \
-  --index-document index.html \
-  --404-document index.html
-```
-
-3. Build the SPA and upload the contents of dist to the `$web` container:
+1. Create your settings file:
 
 ```bash
-# build
-npm run build
-
-# publish
-az storage blob upload-batch \
-  --account-name <productappstoragename> \
-  --source ./dist \
-  --destination '$web' \
-  --overwrite
-
-# get URL
-az storage account show \
-  --name <productappstoragename> \
-  --resource-group <your-resource-group> \
-  --query "primaryEndpoints.web" \
-  --output tsv
+cd infra
+cp terraform.tfvars.example terraform.tfvars
 ```
 
-4. Add your storage site to CORS on the Function App (so the deployed web app can access the web service):
+2. Edit `terraform.tfvars`:
+
+| Setting | Value |
+| --- | --- |
+| `subscription_id` | Your Azure subscription ID |
+| `project` | Project name used in resource names, up to 10 characters |
+| `environment` | Environment name used in resource names, up to 6 characters, such as `lab` |
+| `location` | An Azure region your subscription permits |
+| `function_app_name` | The name of your backend Function App |
+| `function_app_resource_group_name` | The resource group containing your backend Function App |
+| `api_base_url` | Optional. Set this only if your Function App doesn't use `<name>.azurewebsites.net`, and include the trailing slash |
+
+3. Create the resources and publish the app:
 
 ```bash
-az functionapp cors add \
-  --name <your-backend-products-func> \
-  --resource-group <your-resource-group> \
-  --allowed-origins https://<app-store-endpoint>
+terraform init
+terraform apply
 ```
 
-### Configure the Monitoring
-
-1. Create a Log Analytics Workspace (if you don't already have one for this environment):
+4. Get the URL of the deployed site:
 
 ```bash
-az monitor log-analytics workspace create \
-  --name <your-workspace-name> \
-  --resource-group <your-resource-group> \
-  --location <permitted-location>
+terraform output website_url
 ```
 
-2. Create an Application Insights resource for the frontend app:
+### Publish changes
+
+Run `terraform apply` from `infra/` again. Because SPAs bake their environment variables in at build time, it rebuilds and republishes the app whenever the source files or its settings change.
+
+To republish when nothing has changed:
 
 ```bash
-az monitor app-insights component create \
-  --resource-group <your-resource-group> \
-  --location <permitted-location> \
-  --app <app-insights-name> \
-  --workspace <your-workspace-name> \
-  --kind web
+terraform apply -replace=terraform_data.publish_app
 ```
 
-> Your version of the CLI may ask permission to upgrade the extension: say Y
+### Send local telemetry to Application Insights
 
-3. Get the Application Insights connection string (for SPA env var):
+Get the connection string from `infra/`:
 
 ```bash
-az monitor app-insights component show \
-  --resource-group <your-resource-group> \
-  --app <app-insights-name> \
-  --query connectionString \
-  -o tsv
+terraform output -raw application_insights_connection_string
 ```
 
-Assign the connection string to the `VITE_APPINSIGHTS_CONNECTION_STRING` env var in your `.env.local`
+Assign it to the `VITE_APPINSIGHTS_CONNECTION_STRING` env var in your `.env.local`.
 
-4. Rebuild and republish the SPA
-
-Because SPAs bake their environment variables in at build time, you must rebuild and republish the app for the new telemetry environment variable to take affect.
+### Remove the resources
 
 ```bash
-# build
-npm run build
-
-# publish
-az storage blob upload-batch \
-  --account-name <productappstoragename> \
-  --source ./dist \
-  --destination '$web' \
-  --overwrite
+terraform destroy
 ```
+
+This deletes everything Terraform created and removes the site from the Function App's CORS settings. The Function App itself isn't deleted.
 
 ## Azure Application Insights Telemetry Setup
 
